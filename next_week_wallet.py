@@ -15,9 +15,12 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from sklearn.base import clone
 from scipy.stats import spearmanr
 from xgboost import XGBRegressor
-from dotenv import load_dotenv
 
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 warnings.simplefilter("ignore", category=FutureWarning)
 warnings.simplefilter("ignore", category=UserWarning)
@@ -41,26 +44,36 @@ class config:
 
 os.makedirs(config.DATA_DIR, exist_ok=True)
 
-print("NextWeekWallet - next-week stock forecasting tool")
-print()
 
-API_KEY = os.environ.get("ALPHA_VANTAGE_API_KEY", "")
+## 1. API key
+def get_api_key() -> str:
+    try:
+        from kaggle_secrets import UserSecretsClient
+        key = UserSecretsClient().get_secret("ALPHA_API")
+        if key:
+            return key
+    except Exception:
+        pass
+    return os.environ.get("ALPHA_VANTAGE_API_KEY", "")
+
+
+API_KEY = get_api_key()
 if not API_KEY:
     raise RuntimeError(
         "No Alpha Vantage key found.\n"
-        "Copy .env.example to .env and add your key, or run:\n"
-        "  export ALPHA_VANTAGE_API_KEY=your_key_here\n"
-        "Get a free key at https://www.alphavantage.co/support/#api-key"
+        "Get a free key at https://www.alphavantage.co/support/#api-key\n"
+        "Then set it as an environment variable: ALPHA_VANTAGE_API_KEY\n"
+        "(or add it to a .env file in the project root)."
     )
 
 
-## 1. Ticker input
+## 2. Ticker input
 TICKER = input("Enter stock ticker symbol (e.g. AAPL): ").strip().upper()
 if not TICKER:
     raise RuntimeError("No ticker entered.")
 
 
-## 2. Data loading
+## 3. Data loading
 def _cache_path(ticker: str) -> str:
     return os.path.join(config.DATA_DIR, f"{ticker}_weekly_adj.csv")
 
@@ -116,7 +129,7 @@ def load_prices(ticker: str, force_refresh: bool = False) -> pd.DataFrame:
 prices = load_prices(TICKER)
 
 
-## 3. Feature engineering
+## 4. Feature engineering
 def _rsi(close: pd.Series, window: int = 14) -> pd.Series:
     delta = close.diff()
     gain = delta.clip(lower=0.0)
@@ -217,7 +230,7 @@ tuning_set = make_horizon_dataset(feature_block, prices, horizon=1)
 cols = feature_columns(tuning_set)
 
 
-## 4. Hyperparameter tuning (once, reused across horizons)
+## 5. Hyperparameter tuning (once, reused across horizons)
 n_train = int(len(tuning_set) * config.TRAIN_FRACTION)
 X_tune_raw = tuning_set[cols].values[:n_train]
 y_tune = tuning_set["target"].values[:n_train]
@@ -278,7 +291,7 @@ tuned_models = {
 }
 
 
-## 5. Walk-forward backtest and forecast, per horizon
+## 6. Walk-forward backtest and forecast, per horizon
 def evaluate(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
     rmse = float(np.sqrt(mean_squared_error(y_true, y_pred)))
     mae = float(mean_absolute_error(y_true, y_pred))
@@ -385,7 +398,7 @@ for h in config.HORIZONS:
 forecast_df = pd.DataFrame(forecast_rows).set_index("Weeks ahead")
 
 
-## 6. Plain-English summary
+## 7. Plain-English summary
 print("=" * 62)
 print(f"{TICKER} forecast summary")
 print("=" * 62)
@@ -399,10 +412,10 @@ for row in forecast_rows:
     print(
         f"In {row['Weeks ahead']} week(s), around {row['Estimated date']}: "
         f"{TICKER} could be worth about ${row['Estimated price ($)']:.2f} a share "
-        f"(likely between ${float(low):.2f} and ${float(high):.2f}). "
+        f"(likely between ${float(low):.2f} and ${float(high):.2f}).\n"
         f"Every $1 invested today could become about ${row['Value of $1 invested today ($)']:.2f}. "
         f"This method has gotten the direction right about {row['How often right before (%)']:.1f}% "
-        f"of the time in similar past weeks."
+        f"of the time in similar past weeks.\n"
     )
 
 print()
@@ -413,7 +426,7 @@ print("=" * 62)
 forecast_df
 
 
-## 7. Chart 1: actual vs predicted (1-week horizon, walk-forward, last N years)
+## 8. Chart 1: actual vs predicted (1-week horizon, walk-forward, last N years)
 print(f"\nChart 1 shows what actually happened each week vs. what each method would have")
 print(f"predicted, over the last {config.DISPLAY_YEARS} years. Click a name in the legend to show or hide it.\n")
 
@@ -456,7 +469,7 @@ fig1.update_yaxes(tickformat=".2%", showspikes=True)
 fig1.show()
 
 
-## 8. Chart 2: value of $1 invested over time (last N years)
+## 9. Chart 2: value of $1 invested over time (last N years)
 print(f"\nChart 2 shows what $1 would have grown into if you had followed each method's")
 print(f"buy/hold-cash signal each week, compared with simply buying and holding.\n")
 
@@ -491,7 +504,7 @@ fig2.update_yaxes(showspikes=True)
 fig2.show()
 
 
-## 9. Advanced detail (optional, technical) — see README.md for a glossary
+## 10. Advanced detail (optional, technical) — see README.md for a glossary
 print("\nAdvanced detail below is optional. See README.md for what each term means.\n")
 for h in config.HORIZONS:
     print(f"--- {h}-week horizon: model comparison ---")
